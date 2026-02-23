@@ -944,7 +944,7 @@ class CacheHandler:
             The name of the cached table.
         """
         if (entry := self._cache_name_to_entry.pop(name, None)) is not None:
-            self._cache_op_to_entry.pop(entry.orig_op)
+            self._cache_op_to_entry.pop(entry.orig_op, None)
             entry.finalizer.detach()
             try:
                 self._drop_cached_table(name)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gc
+
 import pytest
 from pytest import mark
 
@@ -138,3 +140,49 @@ def test_persist_expression_release(con, alltypes):
 
     with pytest.raises(Exception, match=cached_table.op().name):
         cached_table.execute()
+
+
+@mark.notimpl(["datafusion", "flink", "impala", "trino", "druid"])
+@mark.notimpl(["exasol"], reason="Exasol does not support temporary tables")
+@pytest.mark.never(
+    ["risingwave"],
+    raises=com.UnsupportedOperationError,
+    reason="Feature is not yet implemented: CREATE TEMPORARY TABLE",
+)
+def test_cache_concurrent_structurally_equal_expressions(con, alltypes):
+    expr1 = alltypes.mutate(
+        test_column=ibis.literal("calculation"),
+        other_column=ibis.literal("structurally equal"),
+    )
+    expr2 = alltypes.mutate(
+        test_column=ibis.literal("calculation"),
+        other_column=ibis.literal("structurally equal"),
+    )
+
+    assert expr1.op() == expr2.op()
+    assert expr1.op() is not expr2.op()
+
+    cached1 = expr1.cache()
+    name1 = cached1.op().name
+
+    # Detach the finalizer so the entry stays in the dicts after the cached op
+    # is garbage-collected (simulates a race where two requests share a backend).
+    entry1 = con._cache_name_to_entry[name1]
+    entry1.finalizer.detach()
+
+    del cached1
+    gc.collect()
+
+    # entry1's weak ref is now dead; caching expr2 creates a new entry that
+    # overwrites the shared _cache_op_to_entry slot.
+    cached2 = expr2.cache()
+    name2 = cached2.op().name
+    assert name1 != name2
+
+    # Finalise the first name — pops the shared op slot.
+    con._finalize_cached_table(name1)
+
+    # Finalise the second — must not raise KeyError.
+    cached2.release()
+
+    assert expr2.op() not in con._cache_op_to_entry
