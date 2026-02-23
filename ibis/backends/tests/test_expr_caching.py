@@ -179,8 +179,11 @@ def test_cache_concurrent_structurally_equal_expressions(con, alltypes):
     name2 = cached2.op().name
     assert name1 != name2
 
-    # Finalise the first name — pops the shared op slot.
+    # Finalise the first name — must not evict the newer entry's mapping.
     con._finalize_cached_table(name1)
+
+    entry2 = con._cache_name_to_entry[name2]
+    assert con._cache_op_to_entry.get(expr2.op()) is entry2
 
     # Finalise the second — must not raise KeyError.
     cached2.release()
